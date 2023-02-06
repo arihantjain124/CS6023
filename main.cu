@@ -23,7 +23,6 @@ __global__ void per_row_AB_kernel(long int *A, long int *B, long int *C,long int
     long int id_b = ((threadIdx.x) % patch) + offset;
     if(id_a < m && id_b < m)
     {
-        // printf("%ld ,%ld: \n",id_a,id_b);
         for(int i = 0;i<n;i++){
             for(int j = 0;j<n;j++){
             long int id_c = (i * m) + (j * m * n) + (id_a*n*m*n) + (id_b);
@@ -35,47 +34,33 @@ __global__ void per_row_AB_kernel(long int *A, long int *B, long int *C,long int
 
 __global__ void per_column_AB_kernel(long int *A, long int *B, long int *C,long int m, long int n){
     
-    // if (threadIdx.x == 0 && threadIdx.y == 1 && threadIdx.z == 0 && blockIdx.x == 1)
-    // {
     long int id_a = threadIdx.x + (blockIdx.x * blockDim.x);
     long int id_b = threadIdx.y + (blockIdx.y * blockDim.y);
     if(id_a < n && id_b < n)
     {
-        // printf("%ld , %ld , %ld ", id_a,id_b,blockIdx.x);
-    for(int i = 0;i<m;i++){
-        for(int j = 0;j<m;j++){
-            long int id_c = (i * n * m * n) + (j) + (id_a*m) + (id_b *m*n);
-            // printf("%ld : \n",id_c;
-            C[id_c] = A[id_a + (i*n)] * B[id_b + (j*n)];
+        for(int i = 0;i<m;i++){
+            for(int j = 0;j<m;j++){
+                long int id_c = (i * n * m * n) + (j) + (id_a*m) + (id_b *m*n);
+                C[id_c] = A[id_a + (i*n)] * B[id_b + (j*n)];
+            }
         }
     }
 }
-}
-// }
 
 __global__ void per_element_kernel(long int *A, long int *B, long int *C,long int m, long int n){
 
-
+    if(threadIdx.x == 0 && threadIdx.y == 0 && blockIdx.x == 0 && blockIdx.y == 0)
+        printf("%ld, %ld ,%ld , %ld ",blockDim.x,blockDim.y,gridDim.x,gridDim.y);
     long int id_c;
     long int a = (threadIdx.x + (blockDim.x * blockIdx.x));
-    long int b;
-    if (blockIdx.y <1)
-        b = (threadIdx.y * m * n);
-    else
-        b = (blockIdx.y * blockDim.y * threadIdx.y * m * n);
-    id_c = a + b;
-    if(id_c < (m*m*n*n)  && a < (m*n) && (b/(m*n)) < (m*n))
+    long int b = (threadIdx.y + (blockDim.y * blockIdx.y));
+    id_c = a + (b * m * n);
+    if(a < (m*n) && b < (m*n))
     {
-        // offset_x = blockIdx.x * m;
-        // offset_y = blockIdx.y * n;
-        long int id_a = ((int)(a / m) % n) +  ( (int)( (b/(m*n)) / n) * n) ;
-        long int id_b = ((a % m) *n) + ((b/(m*n)) % n) ;
-        // printf(" %d ,%d \n", blockDim.x,  blockDim.y);
-        // printf(" %d ,%d \n", gridDim.x,  gridDim.y);
+        long int id_a = ((int)(a / m) % n) +  ( (int)( (b) / n) * n) ;
+        long int id_b = ((a % m) *n) + ((b) % n) ;
         C[id_c] = A[id_a] * B[id_b];
     }
-    // offset_x = blockIdx.x * m;
-    // offset_y = blockIdx.y * n;
 }
 
 /**

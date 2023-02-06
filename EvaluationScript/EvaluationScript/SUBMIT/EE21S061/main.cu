@@ -17,32 +17,31 @@ ofstream outfile; // The handle for printing the output
 
 __global__ void per_row_AB_kernel(long int *A, long int *B, long int *C,long int m, long int n){
 
-    // if (threadIdx.y == 0 && threadIdx.z == 0 && blockIdx.x == 2)
-    // {
-        int patch = sqrt( (float) blockDim.x);
-        long int offset = blockIdx.x * patch ;
-        long int id_a = ((int)(threadIdx.x / patch)) + offset;
-        long int id_b = ((threadIdx.x) % patch) + offset;
-        if(id_a < m && id_b < m)
-        {
-            // printf("%ld ,%ld: \n",id_a,id_b);
-            for(int i = 0;i<n;i++){
-                for(int j = 0;j<n;j++){
-                long int id_c = (i * m) + (j * m * n) + (id_a*n*m*n) + (id_b);
-                C[id_c] = A[((id_a * n ) + i)] * B[((id_b * n ) + j)];
-                }
+    int patch = sqrt( (float) blockDim.x);
+    long int offset = blockIdx.x * patch ;
+    long int id_a = ((int)(threadIdx.x / patch)) + offset;
+    long int id_b = ((threadIdx.x) % patch) + offset;
+    if(id_a < m && id_b < m)
+    {
+        // printf("%ld ,%ld: \n",id_a,id_b);
+        for(int i = 0;i<n;i++){
+            for(int j = 0;j<n;j++){
+            long int id_c = (i * m) + (j * m * n) + (id_a*n*m*n) + (id_b);
+            C[id_c] = A[((id_a * n ) + i)] * B[((id_b * n ) + j)];
             }
         }
     }
-// }
+}
 
 __global__ void per_column_AB_kernel(long int *A, long int *B, long int *C,long int m, long int n){
     
-    long int offset = blockIdx.x;
+    // if (threadIdx.x == 0 && threadIdx.y == 1 && threadIdx.z == 0 && blockIdx.x == 1)
+    // {
     long int id_a = threadIdx.x + (blockIdx.x * blockDim.x);
     long int id_b = threadIdx.y + (blockIdx.y * blockDim.y);
     if(id_a < n && id_b < n)
     {
+        // printf("%ld , %ld , %ld ", id_a,id_b,blockIdx.x);
     for(int i = 0;i<m;i++){
         for(int j = 0;j<m;j++){
             long int id_c = (i * n * m * n) + (j) + (id_a*m) + (id_b *m*n);
@@ -52,25 +51,27 @@ __global__ void per_column_AB_kernel(long int *A, long int *B, long int *C,long 
     }
 }
 }
+// }
 
 __global__ void per_element_kernel(long int *A, long int *B, long int *C,long int m, long int n){
-    if (blockIdx.x == 0 &&  blockIdx.y == 0 && blockIdx.z == 0)
-        {
-            if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0)
-            {
-                long int id_c = threadIdx.x + (threadIdx.y * m * n);
-                if(id_c < (m*m*n*n)  && threadIdx.x < (m*n) && threadIdx.y < (m*n))
-                {
-                // offset_x = blockIdx.x * m;
-                // offset_y = blockIdx.y * n;
-                long int id_a = ((int)(threadIdx.x / m) % n) +  ( (int)(threadIdx.y / n) * n) ;
-                long int id_b = ((threadIdx.x % m) *n) + ((threadIdx.y) % n) ;
-                // printf(" %d ,%d \n", blockDim.x,  blockDim.y);
-                // printf(" %d ,%d \n", gridDim.x,  gridDim.y);
-                C[id_c] = A[id_a] * B[id_b];
-                }
-            }
-        }
+
+
+    long int id_c;
+    long int a = (threadIdx.x + (blockDim.x * blockIdx.x));
+    long int b = (threadIdx.y + (blockDim.y * blockIdx.y));
+    id_c = a + (b * m * n);
+    if(id_c < (m*m*n*n)  && a < (m*n) && b < (m*n))
+    {
+        // offset_x = blockIdx.x * m;
+        // offset_y = blockIdx.y * n;
+        long int id_a = ((int)(a / m) % n) +  ( (int)( (b) / n) * n) ;
+        long int id_b = ((a % m) *n) + ((b) % n) ;
+        // printf(" %d ,%d \n", blockDim.x,  blockDim.y);
+        // printf(" %d ,%d \n", gridDim.x,  gridDim.y);
+        C[id_c] = A[id_a] * B[id_b];
+    }
+    // offset_x = blockIdx.x * m;
+    // offset_y = blockIdx.y * n;
 }
 
 /**
