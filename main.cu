@@ -17,10 +17,10 @@ ofstream outfile; // The handle for printing the output
 
 __global__ void per_row_AB_kernel(long int *A, long int *B, long int *C,long int m, long int n){
 
-    int patch = sqrt((float) gridDim.x);
-    int offset = sqrt((float) blockDim.x) ;
-    long int id_a = ((int)(threadIdx.x / offset)) + (offset * ((int)(blockIdx.x / patch)));
-    long int id_b = ((threadIdx.x) % offset) + (offset * (blockIdx.x % patch));
+    int patch = sqrt((float) blockDim.x);
+    int offset = sqrt((float) gridDim.x) ;
+    long int id_a = ((int)(threadIdx.x / patch)) + (patch * ((int)(blockIdx.x / offset)));
+    long int id_b = ((threadIdx.x) % patch) + (patch * (blockIdx.x % offset));
     if(id_a < m && id_b < m)
     {
         for(int i = 0;i<n;i++){
@@ -31,14 +31,20 @@ __global__ void per_row_AB_kernel(long int *A, long int *B, long int *C,long int
         }
     }
 }
+
 __global__ void per_column_AB_kernel(long int *A, long int *B, long int *C,long int m, long int n){
     
-    long int id_a = threadIdx.x + (blockIdx.x * blockDim.x);
-    long int id_b = threadIdx.y + (blockIdx.y * blockDim.y);
+    int offset = sqrt((float) gridDim.x) ;
+    if(threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0 && blockIdx.x == 0)
+        printf("%d \n" , offset);
+    long int id_a = threadIdx.x + ( ((int)(blockIdx.x / offset))  * blockDim.x);
+    long int id_b = threadIdx.y + ( (blockIdx.x % offset) * blockDim.x);
+
     if(id_a < n && id_b < n)
     {
         for(int i = 0;i<m;i++){
             for(int j = 0;j<m;j++){
+
                 long int id_c = (i * n * m * n) + (j) + (id_a*m) + (id_b *m*n);
                 C[id_c] = A[id_a + (i*n)] * B[id_b + (j*n)];
             }
@@ -48,22 +54,18 @@ __global__ void per_column_AB_kernel(long int *A, long int *B, long int *C,long 
 
 __global__ void per_element_kernel(long int *A, long int *B, long int *C,long int m, long int n){
 
-    // if(threadIdx.x == 0 && threadIdx.y == 0 && blockIdx.x == 0 && blockIdx.y == 0)
-    //     printf("%ld, %ld ,%ld , %ld ",blockDim.x,blockDim.y,gridDim.x,gridDim.y);
-    long int id_c;
-    // blockDim.x * gridDim.x * blockDim.y * blockIdx.y +  threadIdx.y * blockDim.x  +  blockIdx.x * blockDim.x * blockDim.y   +   threadIdx.x; 
+    long int id_c; 
     long int r,c;
-    id_c = blockDim.x * gridDim.x * blockDim.y * blockIdx.y +  threadIdx.y * blockDim.x  +  blockIdx.x * blockDim.x * blockDim.y   +   threadIdx.x;
+    id_c = (blockDim.x * gridDim.x * blockDim.y * blockIdx.y) +  (threadIdx.y * blockDim.x)  +  (blockIdx.x * blockDim.x * blockDim.y)   +   threadIdx.x;
     if(id_c < (m*n*m*n))
     {
         r =  id_c / (m*n);
         c =  id_c % (m*n);
 
+        long int id_a = (((int)(r / n)) * n) + ((int)(c / m));
 
-        long int id_a = (r * n) + c;
-        long int id_b = (((r * m) % m) * n ) + ((c * n) % n) ;
-        
-        
+        long int id_b = ( r % n ) + ( (c % m) * n );
+
         C[ (r * m * n) + c] = A[id_a] * B[id_b];
     }
 }
@@ -149,8 +151,8 @@ int main(int argc,char **argv){
     gridDimx = ceil(float(m*m) / 1024);
     // printf( " %ld " ,  gridDimx);
     long int threadDimx = 1024;
-    per_row_AB_kernel<<<gridDimx,threadDimx>>>(d_a,d_b,d_c,m,n);
-    cudaDeviceSynchronize();                                                           
+    // per_row_AB_kernel<<<gridDimx,threadDimx>>>(d_a,d_b,d_c,m,n);
+    // cudaDeviceSynchronize();                                                           
 
     double endtime = rtclock(); 
 	printtime("GPU Kernel-1 time: ", starttime, endtime);  
@@ -165,48 +167,48 @@ int main(int argc,char **argv){
      * To be launched with 1D grid, 2D block
      * Each thread should process a complete column of  A, B
      **/
-    // dim3 block2(32,32,1);
+    dim3 block2(32,32,1);
 
-    // // --> Set the launch configuration 
+    // --> Set the launch configuration 
 
-    // gridDimx = ceil(float(n) / 32);
-    // starttime = rtclock(); 
+    gridDimx = ceil(float(n*n) / 1024);
+    starttime = rtclock(); 
 
-    // // --> Launch the kernel 
-    // per_column_AB_kernel<<<gridDimx,block2>>>(d_a,d_b,d_c,m,n);
-    // cudaDeviceSynchronize(); 
+    // --> Launch the kernel 
+    per_column_AB_kernel<<<gridDimx,block2>>>(d_a,d_b,d_c,m,n);
+    cudaDeviceSynchronize(); 
 
-    // endtime = rtclock(); 
-  	// printtime("GPU Kernel-2 time: ", starttime, endtime);  
-    // cudaMemcpy(h_c, d_c, m * n * m * n * sizeof(long int),cudaMemcpyDeviceToHost);
-    // // --> Copy C from Device to Host
+    endtime = rtclock(); 
+  	printtime("GPU Kernel-2 time: ", starttime, endtime);  
+    cudaMemcpy(h_c, d_c, m * n * m * n * sizeof(long int),cudaMemcpyDeviceToHost);
+    // --> Copy C from Device to Host
 
-    // printMatrix(h_c, m * n, m * n,"kernel2.txt");
-    // cudaMemset(d_c, 0, m * n * m * n * sizeof(long int));
+    printMatrix(h_c, m * n, m * n,"kernel2.txt");
+    cudaMemset(d_c, 0, m * n * m * n * sizeof(long int));
 
-    // /**
-    //  * Kernel 3 - per_element_kernel
-    //  * To be launched with 2D grid, 2D block
-    //  * Each thread should process one element of the output 
-    //  **/
+    /**
+     * Kernel 3 - per_element_kernel
+     * To be launched with 2D grid, 2D block
+     * Each thread should process one element of the output 
+     **/
 
-    // gridDimx = ceil(float(n * n) / 16);
-    // gridDimy = ceil(float(m * m) / 64);
-    // dim3 grid3(gridDimx,gridDimy,1);
-    // dim3 block3(64,16,1);
+    gridDimx = ceil(float(n * n) / 16);
+    gridDimy = ceil(float(m * m) / 64);
+    dim3 grid3(gridDimx,gridDimy,1);
+    dim3 block3(64,16,1);
 
-    // starttime = rtclock();  
+    starttime = rtclock();  
 
-    // // --> Launch the kernel 
-    // per_element_kernel<<<grid3,block3>>>(d_a,d_b,d_c,m,n);
-    // cudaDeviceSynchronize();                                                              
+    // --> Launch the kernel 
+    per_element_kernel<<<grid3,block3>>>(d_a,d_b,d_c,m,n);
+    cudaDeviceSynchronize();                                                              
 
-    // endtime = rtclock();  
-	// printtime("GPU Kernel-3 time: ", starttime, endtime);  
+    endtime = rtclock();  
+	printtime("GPU Kernel-3 time: ", starttime, endtime);  
 
-    // // --> Copy C from Device to Host
-    // cudaMemcpy(h_c, d_c, m * n * m * n * sizeof(long int),cudaMemcpyDeviceToHost);
-    // printMatrix(h_c, m * n, m * n,"kernel3.txt");
+    // --> Copy C from Device to Host
+    cudaMemcpy(h_c, d_c, m * n * m * n * sizeof(long int),cudaMemcpyDeviceToHost);
+    printMatrix(h_c, m * n, m * n,"kernel3.txt");
 
     return 0;
 }
