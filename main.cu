@@ -35,11 +35,8 @@ __global__ void per_row_AB_kernel(long int *A, long int *B, long int *C,long int
 __global__ void per_column_AB_kernel(long int *A, long int *B, long int *C,long int m, long int n){
     
     int offset = sqrt((float) gridDim.x) ;
-    if(threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0 && blockIdx.x == 0)
-        printf("%d \n" , offset);
     long int id_a = threadIdx.x + ( ((int)(blockIdx.x / offset))  * blockDim.x);
     long int id_b = threadIdx.y + ( (blockIdx.x % offset) * blockDim.x);
-
     if(id_a < n && id_b < n)
     {
         for(int i = 0;i<m;i++){
@@ -148,11 +145,11 @@ int main(int argc,char **argv){
 
     double starttime = rtclock();  
     // --> Launch the kernel
-    gridDimx = ceil(float(m*m) / 1024);
+    gridDimx = ceil(float(m * m) / 1024) * 2;
     // printf( " %ld " ,  gridDimx);
     long int threadDimx = 1024;
-    // per_row_AB_kernel<<<gridDimx,threadDimx>>>(d_a,d_b,d_c,m,n);
-    // cudaDeviceSynchronize();                                                           
+    per_row_AB_kernel<<<gridDimx,threadDimx>>>(d_a,d_b,d_c,m,n);
+    cudaDeviceSynchronize();                                                           
 
     double endtime = rtclock(); 
 	printtime("GPU Kernel-1 time: ", starttime, endtime);  
@@ -171,9 +168,9 @@ int main(int argc,char **argv){
 
     // --> Set the launch configuration 
 
-    gridDimx = ceil(float(n*n) / 1024);
+    gridDimx = ceil(float(n*n) / 1024) * 2;
     starttime = rtclock(); 
-
+    printf("%ld ",gridDimx);
     // --> Launch the kernel 
     per_column_AB_kernel<<<gridDimx,block2>>>(d_a,d_b,d_c,m,n);
     cudaDeviceSynchronize(); 
