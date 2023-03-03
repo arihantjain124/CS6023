@@ -9,23 +9,27 @@ ofstream outfile; // The handle for printing the output
 __global__ void computeKernel(int p, int q, int r, int *A, int *B, 
 	         int *C, int *D, int *E){
 	
-
-	// if(threadIdx.x == 1 && threadIdx.y == 0 && threadIdx.z == 0){
-	long int id_e = (blockDim.x * gridDim.x * blockDim.y * blockIdx.y) + (blockIdx.x * blockDim.x * blockDim.y)  +  (threadIdx.y * blockDim.x)  +   threadIdx.x;
+	__shared__ int s[512];
+	// if(blockIdx.x == 0){
+	long int id_e = (blockIdx.x * blockDim.x)  +   threadIdx.x;
 	long int r_e = id_e / (r);
 	long int c_e = id_e % (r);
 
-	int tempa = 0;
-	int tempb = 0;
-
-	// if (id_e < (p*r)){
-	// 	
-	for (int i =0;i<q;i++){
-		// printf("%d , %d \n",A[ (r_e*q) + i],B[ (i*r)  +  c_e ]);
-		tempa += (A[ (r_e*q) + i] * B[ (i*r)  +  c_e ]);
-		tempb += (C [(r_e*q) + i ] * D[ (c_e*q) + i ]) ;
+	if(threadIdx.y == 0){
+		for (int i =0;i<q;i++){
+		E[id_e] += (A[ (r_e*q) + i] * B[ (i*r)  +  c_e ]);
+		}
 	}
-	E[id_e] = tempa + tempb;
+	else{
+		__syncthreads();
+		s[threadIdx.x] = 0;
+		for (int i =0;i<q;i++){
+		s[threadIdx.x] += (C [(r_e*q) + i ] * D[ (c_e*q) + i ]) ;
+	}
+
+	}
+	__syncthreads();
+	E[id_e] = E[id_e] + s[threadIdx.x];
 	// }
 	// }
 
@@ -56,10 +60,9 @@ void computE(int p, int q, int r, int *h_matrixA, int *h_matrixB,
 	/* Write your code here */
 	/* Configure and launch kernels */
 	long int gridDimx, gridDimy;
-	gridDimx = ceil(float(p*r) / 1024);
-    gridDimy = 1;
-    dim3 grid3(gridDimx,gridDimy,1);
-    dim3 block3(32,32,1);
+	gridDimx = ceil(float(p*r) / 1024)*2;
+    dim3 grid3(gridDimx,1,1);
+    dim3 block3(512,2,1);
 	computeKernel<<<grid3,block3>>>(p,q,r,d_matrixA,d_matrixB,d_matrixC,d_matrixD,d_matrixE);
 	cudaDeviceSynchronize();
 	/* ****************************************************************** */
