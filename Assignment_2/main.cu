@@ -8,32 +8,57 @@ ofstream outfile; // The handle for printing the output
 
 __global__ void computeKernel(int p, int q, int r, int *A, int *B, 
 	         int *C, int *D, int *E){
-	
-	__shared__ int s[512];
-	// if(blockIdx.x == 0){
-	long int id_e = (blockIdx.x * blockDim.x)  +   threadIdx.x;
-	long int r_e = id_e / (r);
-	long int c_e = id_e % (r);
 
-	if(threadIdx.y == 0){
-		for (int i =0;i<q;i++){
-		E[id_e] += (A[ (r_e*q) + i] * B[ (i*r)  +  c_e ]);
-		}
-	}
-	else{
-		__syncthreads();
-		s[threadIdx.x] = 0;
-		for (int i =0;i<q;i++){
-		s[threadIdx.x] += (C [(r_e*q) + i ] * D[ (c_e*q) + i ]) ;
-	}
+    __shared__ int As[32][32];
+    __shared__ int Bs[32][32];
+    __shared__ int Cs[32][32];
+    __shared__ int Ds[32][32];
 
-	}
-	__syncthreads();
-	E[id_e] = E[id_e] + s[threadIdx.x];
-	// }
-	// }
+    int row = blockIdx.y * 32 + threadIdx.y;
+    int col = blockIdx.x * 32 + threadIdx.x;
 
+    int temp = 0;
+	int iter = ceil(((float(q) + 32 - 1) / 32));
+    for (int i = 0; i < iter ; ++i) {
+
+		int idx = i * 32 + threadIdx.x;
+
+        if (row < p && idx < q) {
+            As[threadIdx.y][threadIdx.x] = A[(row * q) + idx];
+            Cs[threadIdx.y][threadIdx.x] = C[(row * q) + idx];
+        } else {
+            As[threadIdx.y][threadIdx.x] = 0.0;
+            Cs[threadIdx.y][threadIdx.x] = 0.0;
+        }
+
+		idx = i * 32 + threadIdx.y;
+
+        if (col < r &&  idx < q) {
+            Bs[threadIdx.y][threadIdx.x] = B[(idx) * r + col];
+        } else {
+            Bs[threadIdx.y][threadIdx.x] = 0.0;
+        }
+		
+		idx = i * 32 + threadIdx.x;
+
+		if (row < r && idx < q) {
+            Ds[threadIdx.x][threadIdx.y] = D[(row * q) + idx];
+        } else {
+            Ds[threadIdx.x][threadIdx.y] = 0.0;
+        }
+        __syncthreads();
+
+        for (int j = 0; j < 32; ++j) {
+            temp += (As[threadIdx.y][j] * Bs[j][threadIdx.x]) + (Cs[threadIdx.y][j] * Ds[j][threadIdx.x]);
+        }
+        __syncthreads();
+    }
+
+    if (row < p && col < r) {
+        E[row * r + col] = temp ;
+    }
 }
+
 
 
 
@@ -59,11 +84,10 @@ void computE(int p, int q, int r, int *h_matrixA, int *h_matrixB,
 	/* ****************************************************************** */
 	/* Write your code here */
 	/* Configure and launch kernels */
-	long int gridDimx, gridDimy;
-	gridDimx = ceil(float(p*r) / 1024)*2;
-    dim3 grid3(gridDimx,1,1);
-    dim3 block3(512,2,1);
-	computeKernel<<<grid3,block3>>>(p,q,r,d_matrixA,d_matrixB,d_matrixC,d_matrixD,d_matrixE);
+	dim3 blockDim(32, 32);
+	dim3 gridDim((r + blockDim.x - 1) / blockDim.x, (p + blockDim.y - 1) / blockDim.y);
+
+	computeKernel<<<gridDim,blockDim>>>(p,q,r,d_matrixA,d_matrixB,d_matrixC,d_matrixD,d_matrixE);
 	cudaDeviceSynchronize();
 	/* ****************************************************************** */
 
@@ -154,7 +178,7 @@ int main(int argc, char **argv) {
 	cudaDeviceSynchronize();
 	gettimeofday(&t2, NULL);
 
-	// print the time taken by the compute function
+	// print the time taken blockIdx.y the compute function
 	seconds = t2.tv_sec - t1.tv_sec;
 	microSeconds = t2.tv_usec - t1.tv_usec;
 	printf("Time taken (ms): %.3f\n", 1000*seconds + microSeconds/1000);
