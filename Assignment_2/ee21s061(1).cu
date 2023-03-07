@@ -1,10 +1,8 @@
 #include<iostream>
 #include<sys/time.h>
 #include<cuda.h>
-#include <fstream>
 using namespace std;
 
-ofstream outfile; // The handle for printing the output
 
 __global__ void computeKernel(int p, int q, int r, int *A, int *B, 
 	         int *C, int *D, int *E){
@@ -102,6 +100,7 @@ void computE(int p, int q, int r, int *h_matrixA, int *h_matrixB,
 	cudaFree(d_matrixE);
 }
 
+
 // function to read the input matrices from the input file
 void readMatrix(FILE *inputFilePtr, int *matrix, int rows, int cols) {
 	for(int i=0; i<rows; i++) {
@@ -119,21 +118,6 @@ void writeMatrix(FILE *outputFilePtr, int *matrix, int rows, int cols) {
 		}
 		fprintf(outputFilePtr, "\n");
 	}
-}
-
-
-/**
- * Prints any 1D array in the form of a matrix
- **/
-void printMatrix(int *arr,  int rows,  int cols, char* filename){
-    outfile.open(filename);
-    for( int i = 0; i < rows; i++){
-        for( int j = 0; j < cols; j++){
-            outfile<<arr[i * cols + j]<<" ";
-        }
-        outfile<<"\n";
-    }
-    outfile.close();
 }
 
 int main(int argc, char **argv) {
@@ -178,20 +162,19 @@ int main(int argc, char **argv) {
 	cudaDeviceSynchronize();
 	gettimeofday(&t2, NULL);
 
-	// print the time taken blockIdx.y the compute function
+	// print the time taken by the compute function
 	seconds = t2.tv_sec - t1.tv_sec;
 	microSeconds = t2.tv_usec - t1.tv_usec;
 	printf("Time taken (ms): %.3f\n", 1000*seconds + microSeconds/1000);
 
 	// store the result into the output file
-	// outputFilePtr = fopen(outputFileName, "w");
-	// writeMatrix(outputFilePtr, matrixE, p, r);
+	outputFilePtr = fopen(outputFileName, "w");
+	writeMatrix(outputFilePtr, matrixE, p, r);
 
 	// close files
 	fclose(inputFilePtr);
-	// fclose(outputFilePtr);
+	fclose(outputFilePtr);
 
-	printMatrix(matrixE, p,r,"kernel3.txt");
 	// deallocate memory
 	free(matrixA);
 	free(matrixB);
