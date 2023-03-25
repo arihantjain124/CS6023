@@ -13,69 +13,66 @@
 using namespace std;
 
 __device__ unsigned int level = 0 ;
-__device__ unsigned int counter;
 __device__ unsigned int node_counter = 0;
 __device__ unsigned int last_thread_id;
 __device__ unsigned int last_node_per_level = 0;
-
 ofstream outfile; // The handle for printing the output
 
 /******************************Write your kerenels here ************************************/
 
 
-__global__ void nodes_at_level(int *csrList,int *offset,int *apr,int *aid,int V,int L,int *activeVertex){
+__global__ void nodes_per_level(int *csrList,int *offset,int *apr,int *aid,int V,int L, int *nodesper_level){
 
-    unsigned int id = threadIdx.x;
-    if(id<V){
-        for(int j=0;j<L-1;j++){
-            if( ((apr[id] == 0 && level == 0) || (level > 0  && id>=node_counter && id<=last_node_per_level))){
-                if(aid[id] >= apr[id]){
-                    if(id == node_counter || id == last_node_per_level || (aid[id-1]>=apr[id-1] || aid[id+1]>=apr[id+1])){
-                        
-                        int start,end;
-                        printf("%d:%d:%d:%d\n",level,apr[id],id,node_counter);
-                        start = offset[id];
-                        end = offset[id+1];
-                        for(int i =start;i<end;i++){
-                            int curr_edge = csrList[i];
-                            unsigned temp = atomicAdd(&aid[curr_edge],1);
-                            temp = atomicMax(&last_node_per_level,curr_edge);
-                        }
-                        unsigned temp = atomicAdd(&activeVertex[j],1);
-                    }
-                        
+    unsigned int id = blockIdx.x*blockDim.x + threadIdx.x;
+    for(int j=0;j<L;j++){
+        // printf("%d:%d:%d\n",level,apr[id],id);
+        if( ((apr[id] == 0 && level == 0) || (level > 0  && id>=node_counter && id<=last_node_per_level) ) && id<V  ){
+            // printf("%d:%d:%d:%d\n",level,apr[id],id,node_counter);
+            int start,end;
+            start = offset[id];
+            end = offset[id+1];
+            for(int i =start;i<end;i++){
+                int curr_edge = csrList[i];
+                unsigned temp = atomicAdd(&aid[curr_edge],1);
+                temp = atomicMax(&last_node_per_level,curr_edge);
                 }
-                unsigned temp = atomicAdd(&node_counter,1);
+            unsigned temp = atomicAdd(&node_counter,1);
             }
-            unsigned temp = atomicExch(&last_thread_id,id);
-            temp = atomicAdd(&counter,1);
-            while(counter!=V);
-            if(last_thread_id == id){
-                // printf("%d:%d:%d:%d:%d\n\n\n",node_counter,level,j,last_node_per_level,activeVertex[j]);
-                counter = 0;
-                level+=1;
-                // node_counter = 0 ;
-            }
+        unsigned temp = atomicExch(&last_thread_id,id);
+        __syncthreads();
+        if(last_thread_id == id){
+            unsigned temp = atomicExch(&nodesper_level[level+1],node_counter);
+            
+            printf("%d:%d:%d:pl\n",nodesper_level[level+1],level);
+            level+=1;
         }
-    // printf("%d",aid[id]);
+        __syncthreads();
     }
 }
 
-// __global__ void nodes_at_level(int *csrList,int *offset,int *apr,int *aid){
+__global__ void active_vertex_perlevel(int *csrList,int *offset,int *apr,int *aid,int V,int L, int *nodesper_level, int *activeVertex){
 
-//     unsigned int id = threadIdx.x;
+    unsigned int id = blockIdx.x*blockDim.x + threadIdx.x;
+    for(int i=0;i<L;i++){
+        while(i>level);
+        if( id>=nodesper_level[i] && id<nodesper_level[i+1]  && id<V   ){
+            // printf("running");
+            // printf("%d:%d\n",i,aid[id]);
+            if(aid[id] >= apr[id])
+            {
+                unsigned temp = atomicAdd(&activeVertex[i],1);
+            }
 
-//     if(apr[id] == 0){
-//         unsigned int value = atomicInc(&counter,0);
-//     }
-
-//     // int start ,end;
-//     // start = offset[id]
-//     // end = offset[id+1]
-    
-
-
-// }
+            
+        }
+        unsigned temp = atomicExch(&last_thread_id,id);
+        __syncthreads();
+        if(last_thread_id == id){
+            printf("%d:%d:av\n",activeVertex[i],i);
+        }
+        __syncthreads();
+    }
+}
 
     
     
@@ -179,9 +176,14 @@ int main(int argc,char **argv){
 double starttime = rtclock(); 
 
 /*********************************CODE AREA*****************************************/
-unsigned int temp;
 
-nodes_at_level<<<1,1024>>>(d_csrList,d_offset,d_apr,d_aid,V,L,d_activeVertex);
+int *d_nodesper_level;
+cudaMalloc(&d_nodesper_level, (L+1)*sizeof(int));
+cudaMemset(d_nodesper_level, 0, (L+1)*sizeof(int));
+
+nodes_per_level<<<1,1024>>>(d_csrList,d_offset,d_apr,d_aid,V,L,d_nodesper_level);
+// cudaDeviceSynchronize();
+active_vertex_perlevel<<<1,1024>>>(d_csrList,d_offset,d_apr,d_aid,V,L,d_nodesper_level,d_activeVertex);
 cudaDeviceSynchronize();
 
  
