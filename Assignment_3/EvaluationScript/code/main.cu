@@ -220,17 +220,17 @@ double starttime = rtclock();
 int *d_nodesper_level;
 cudaMalloc(&d_nodesper_level, (L+1)*sizeof(int));
 cudaMemset(d_nodesper_level, 0, (L+1)*sizeof(int));
-
+printf("Memory Operations Over");
 int num_threads = V;
 
 if(V<10000)
 {
-    num_threads = V;
+    num_threads = 10000;
 }
 
 long int gridDimx = ceil(float(num_threads)/1024);
 long int threadDimx = 1024;
-// printf("%ld",gridDimx);
+printf("%ld",gridDimx);
 
 
 nodes_per_level<<<gridDimx,threadDimx>>>(d_csrList,d_offset,d_apr,d_aid,V,L,d_nodesper_level);

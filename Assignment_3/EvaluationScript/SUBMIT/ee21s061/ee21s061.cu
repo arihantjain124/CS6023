@@ -26,17 +26,17 @@ ofstream outfile; // The handle for printing the output
 
 __global__ void nodes_per_level(int *csrList,int *offset,int *apr,int *aid,int V,int L, int *nodesper_level){
     unsigned int id = blockIdx.x*blockDim.x + threadIdx.x;
-
+    unsigned int level_id;
     for(int j=0;j<L;j++){
-
-        if( ((apr[id] == 0 && level == 0) || (level > 0  && id>=node_counter && id<=last_node_per_level) ) && id<V  ){
-            // printf("%d:%d:%d:%d\n",level,apr[id],id,node_counter);
+        level_id = nodesper_level[level] + id;
+        if( ((apr[level_id] == 0 && level == 0) || (level > 0  && level_id>=node_counter && level_id<=last_node_per_level) ) && level_id<V  && (nodesper_level[level]!=0 || level==0) ){
+            
             int start,end;
-            start = offset[id];
-            end = offset[id+1];
+            start = offset[level_id];
+            end = offset[level_id+1];
             for(int i =start;i<end;i++){
                 int curr_edge = csrList[i];
-                if(aid[id]>=apr[id]){
+                if(aid[level_id]>=apr[level_id]){
                     atomicAdd(&aid[curr_edge],1);
                 }
                 atomicMax((unsigned *)&last_node_per_level,curr_edge);
@@ -54,11 +54,17 @@ __global__ void nodes_per_level(int *csrList,int *offset,int *apr,int *aid,int V
             if(id == last_node_acrross_blocks_pl)
             {    
                 atomicExch((unsigned *)&nodesper_level[level+1],node_counter);
-                printf("%d:%d:%d pl\n",nodesper_level[level+1],level,block_inc_pl);
+                // if(level >10){
+                // printf("%d:%d:%d pl\n",nodesper_level[level+1],level,last_node_per_level);
+                // }
                 atomicAdd((unsigned *)&level,1);
                 atomicExch((unsigned *)&block_inc_pl,0);
             }
             while(block_inc_pl != 0);
+            // if(nodesper_level[level] == 0 && level != 0){
+            //     printf("%d:%d:%d:%d:%d\n",level,level_id,id,blockIdx.x,last_node_acrross_blocks_pl);
+            
+            // }
         }
         __syncthreads();
     }
@@ -67,22 +73,24 @@ __global__ void nodes_per_level(int *csrList,int *offset,int *apr,int *aid,int V
 __global__ void active_vertex_perlevel(int *csrList,int *offset,int *apr,int *aid,int V,int L, int *nodesper_level, int *activeVertex){
 
     unsigned int id = blockIdx.x*blockDim.x + threadIdx.x;
-    for(int i=0;i<L;i++){
-        while(i>level);
-        if( id>=nodesper_level[i] && id<nodesper_level[i+1]  && id<V  ){
-            if(aid[id]>=apr[id])
+    unsigned int level_id;
+    for(int j=0;j<L;j++){
+        level_id = nodesper_level[j] + id;
+        while(j>level);
+        if( level_id>=nodesper_level[j] && level_id<nodesper_level[j+1]  && level_id<V  && (nodesper_level[level]!=0 || level==0)  ){
+            if(aid[level_id]>=apr[level_id])
             {
-                if(id>nodesper_level[i] && id<nodesper_level[i+1]-1 && aid[id-1]<apr[id-1] && aid[id+1]<apr[id+1]){
+                if(level_id>nodesper_level[j] && level_id<nodesper_level[j+1]-1 && aid[level_id-1]<apr[level_id-1] && aid[level_id+1]<apr[level_id+1]){
                     int start,end;
-                    start = offset[id];
-                    end = offset[id+1];
+                    start = offset[level_id];
+                    end = offset[level_id+1];
                     for(int i =start;i<end;i++){
                         int curr_edge = csrList[i];
                         atomicAdd(&aid[curr_edge],-1);
                     }
                 }
                 else{
-                    atomicAdd(&activeVertex[i],1);
+                    atomicAdd(&activeVertex[j],1);
                 }
             }
             
@@ -97,6 +105,7 @@ __global__ void active_vertex_perlevel(int *csrList,int *offset,int *apr,int *ai
             
             if(id == last_node_acrross_blocks_av)
             {    
+                // printf("%d:%d:av\n",activeVertex[j],j);
                 atomicExch((unsigned *)&block_inc_av,0);
             }
             while(block_inc_av != 0);
@@ -214,19 +223,24 @@ cudaMemset(d_nodesper_level, 0, (L+1)*sizeof(int));
 
 int num_threads = V;
 
-// if(V<10000)
-// {
-//     num_threads = V;
-// }
+if(V<10000)
+{
+    num_threads = 10000;
+}
+
+
+cudaStream_t s1, s2;
+cudaStreamCreate(&s1);
+cudaStreamCreate(&s2);
 
 long int gridDimx = ceil(float(num_threads)/1024);
 long int threadDimx = 1024;
 // printf("%ld",gridDimx);
 
 
-nodes_per_level<<<gridDimx,threadDimx>>>(d_csrList,d_offset,d_apr,d_aid,V,L,d_nodesper_level);
-// cudaDeviceSynchronize();
-active_vertex_perlevel<<<gridDimx,threadDimx>>>(d_csrList,d_offset,d_apr,d_aid,V,L,d_nodesper_level,d_activeVertex);
+nodes_per_level<<<gridDimx,threadDimx ,0 ,s1>>>(d_csrList,d_offset,d_apr,d_aid,V,L,d_nodesper_level);
+cudaDeviceSynchronize();
+active_vertex_perlevel<<<gridDimx,threadDimx,0,s2>>>(d_csrList,d_offset,d_apr,d_aid,V,L,d_nodesper_level,d_activeVertex);
 cudaDeviceSynchronize();
 
  
