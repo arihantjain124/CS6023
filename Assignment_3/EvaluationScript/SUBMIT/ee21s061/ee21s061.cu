@@ -54,7 +54,7 @@ __global__ void nodes_per_level(int *csrList,int *offset,int *apr,int *aid,int V
             if(id == last_node_acrross_blocks_pl)
             {    
                 atomicExch((unsigned *)&nodesper_level[level+1],node_counter);
-                // printf("%d:%d:%d pl\n",nodesper_level[level+1],level,block_inc_pl);
+                printf("%d:%d:%d pl\n",nodesper_level[level+1],level,block_inc_pl);
                 atomicAdd((unsigned *)&level,1);
                 atomicExch((unsigned *)&block_inc_pl,0);
             }
