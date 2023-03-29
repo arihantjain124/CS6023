@@ -1,3 +1,3 @@
 nvcc main.cu
-./a.out input2.txt
+./a.out input1.txt
 
