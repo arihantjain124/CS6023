@@ -1,6 +1,7 @@
 #include <iostream>
 #include <stdio.h>
 #include <cuda.h>
+#include <numeric>
 
 #define max_N 100000
 #define max_P 30
@@ -20,67 +21,75 @@ __global__ void allot_request(int *centre,int *facility,int *capacity,int *fac_i
   __shared__ unsigned int access_buffer[1024];
   __shared__ unsigned int req_id_buffer[1024];
   __shared__ unsigned int temp_buffer[1024];
+  __shared__ unsigned int temp2_buffer[1024];
   __shared__ int size;
-  __shared__ int counter;
-  __shared__ int last_thread;
-  counter =0;
   size = 1;
 
   if(id < R){
     unsigned int uid = req_cen[id] * 100 + req_fac[id];
-    temp_buffer[id] = uid;
+    access_buffer[id] = uid;
     req_id_buffer[id] = req_id[id];
-    
-    // merge sorting access buffer to collect conflicting request
-    unsigned int start_a,end_a,start_b,end_b,pos;
 
-    for (size =1 ; size <= R/2 ; size =size*2){
-      
-      start_a = id * (size*2);
-      end_a = start_a + size;
-      start_b = end_a;
-      end_b = start_b + size;
-      pos = start_a;
-      // if (id == 0){
-      //   printf("%d,%d : %d,%d \n",temp_buffer[start_a],end_a,temp_buffer[start_b],end_b);
-      // }
-      while (start_a<end_a || start_b<end_b) {
-        if (start_a==end_a){
-          access_buffer[pos] = temp_buffer[start_b];
-          // printf("%d %d,   %d \n",access_buffer[pos],pos,id);
-          start_b+=1;
-          pos=pos+1;
-        }
-        else if (start_b==end_b){
-          access_buffer[pos] = temp_buffer[start_a];
-          // printf("%d %d,   %d \n",access_buffer[pos],pos,id);
-          start_a+=1;
-          pos=pos+1;
-        }
-        else if(temp_buffer[start_a]<=temp_buffer[start_b]){
-          access_buffer[pos] = temp_buffer[start_a];
-          // printf("%d %d,   %d \n",access_buffer[pos],pos,id);
-          start_a+=1;
-          pos=pos+1;
-        }
-        else if (temp_buffer[start_b]<temp_buffer[start_a]){
-          access_buffer[pos] = temp_buffer[start_b];
-          // printf("%d %d,   %d \n",access_buffer[pos],pos,id);
-          start_b+=1;
-          pos=pos+1;
-        }
-      }
-      
-      atomicExch((unsigned *)&last_thread,id);
-      atomicAdd((unsigned *)&counter,1);
-      while(counter<R);
-      temp_buffer[id] = access_buffer[id];
-      if(id == last_thread){
-        atomicExch((unsigned *)&counter,0);
-      }
-      while(counter != 0);
+    if (threadIdx.x == 0 ){
+        int l1,l2,k,h1,h2,j;
+          for(size=1; size < R; size=size*2)
+          {
+            l1=0;
+            k=0;
+            while( l1+size < R)
+            {
+              h1=l1+size-1;
+              l2=h1+1;
+              h2=l2+size-1;
+              if( h2>=R ) 
+                h2=R-1;
+              i=l1;
+              j=l2;
+              while(i<=h1 && j<=h2 )
+              {
+                if( access_buffer[i] <= access_buffer[j] )
+                {
+                  temp2_buffer[k] = req_id_buffer[i];
+                  temp_buffer[k++]=access_buffer[i++];
+                }
+                else
+                { 
+                  temp2_buffer[k] = req_id_buffer[j];
+                  temp_buffer[k++]=access_buffer[j++];
+                }
+              }
+              
+              while(i<=h1)
+              {
+                temp2_buffer[k] = req_id_buffer[i];
+                temp_buffer[k++]=access_buffer[i++];
+
+              }
+              while(j<=h2)
+              {
+                temp2_buffer[k] = req_id_buffer[j];
+                temp_buffer[k++]=access_buffer[j++];
+              }
+              l1=h2+1; 
+            }
+            for(i=l1; k<R; i++) 
+            {
+              temp2_buffer[k] = req_id_buffer[i];
+              temp_buffer[k++]=access_buffer[i];
+
+            }
+
+            for(i=0;i<R;i++)
+            {
+              req_id_buffer[i] = temp2_buffer[i];
+              access_buffer[i]=temp_buffer[i];
+
+            }
+          }
     }
-    printf("%d %d\n",access_buffer[id],counter);
+    __syncthreads();
+    while(id==0 && access_buffer[id]==access_buffer[id-1]);
+      printf("\n%d , %d , %d\n",access_buffer[id],req_id_buffer[id],id);
   }
 
 
@@ -164,8 +173,12 @@ int main(int argc,char **argv)
 
     //*********************************
     // Call the kernels here
-
-
+    int temp = 0;
+    for(int i=0;i<N;i++)
+    {
+      temp = temp + facility[i];
+      facility[i] = temp;
+    }
     // variable declarations...
     int *d_centre,*d_facility,*d_capacity,*d_fac_ids,*d_succ_reqs,*d_tot_reqs,*d_req_id,*d_req_cen,*d_req_fac,*d_req_start,*d_req_slots;
     
