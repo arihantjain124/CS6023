@@ -13,86 +13,146 @@ using namespace std;
 
 __device__ volatile unsigned d_succ = 0;
 __device__ volatile unsigned d_fail = 0;
+__device__ volatile unsigned int counter;
+__device__ volatile unsigned last_thread;
 
+__global__ void init_capacity(short int *capacity_per_hour,int *capacity){
 
-__global__ void allot_request(int *centre,int *facility,int *capacity,int *fac_ids,int *req_id,int *req_cen,int *req_fac,int *req_start,int *req_slots,int i,int R){
+  int idx = threadIdx.x;
+  int idy = threadIdx.y;
+  int blx = blockIdx.x;
+  short int cap;
+
+  cap = capacity[idy + (blx * gridDim.x)];
+  long int id = idx + (idy * blockDim.x) + (blx * gridDim.x);
+  capacity_per_hour[id] = cap;
+}
+
+__global__ void allot_request(int *facility,short int *capacity,int *req_id,int *req_cen,int *req_fac,int *req_start,int *req_slots,int i,int R,int *tot_reqs,int *succ_reqs){
 
   unsigned int id = threadIdx.x;
-  __shared__ unsigned int access_buffer[1024];
-  __shared__ unsigned int req_id_buffer[1024];
-  __shared__ unsigned int temp_buffer[1024];
-  __shared__ unsigned int temp2_buffer[1024];
-  __shared__ int size;
+  __shared__ volatile unsigned int access_buffer[1024];
+  __shared__ volatile unsigned int req_id_buffer[1024];
+  __shared__ volatile unsigned int temp2_buffer[1024];
+  __shared__ volatile long int temp_buffer[1025];
+  counter = 0;
+  __shared__ volatile int size;
   size = 1;
 
-  if(id < R){
-    unsigned int uid = req_cen[id] * 100 + req_fac[id];
-    access_buffer[id] = uid;
-    req_id_buffer[id] = req_id[id];
 
-    if (threadIdx.x == 0 ){
-        int l1,l2,k,h1,h2,j;
-          for(size=1; size < R; size=size*2)
+  __syncthreads();
+  unsigned int uid = req_cen[id] * 100 + req_fac[id];
+  access_buffer[id] = uid;
+  req_id_buffer[id] = req_id[id];
+  
+  __syncthreads();
+  if (id == threadIdx.x){
+      int l1,l2,k,h1,h2,j;
+        for(size=1; size < R; size=size*2)
+        {
+          l1=0;
+          k=0;
+          while( l1+size < R)
           {
-            l1=0;
-            k=0;
-            while( l1+size < R)
+            h1=l1+size-1;
+            l2=h1+1;
+            h2=l2+size-1;
+            if( h2>=R ) 
+              h2=R-1;
+            i=l1;
+            j=l2;
+            while(i<=h1 && j<=h2 )
             {
-              h1=l1+size-1;
-              l2=h1+1;
-              h2=l2+size-1;
-              if( h2>=R ) 
-                h2=R-1;
-              i=l1;
-              j=l2;
-              while(i<=h1 && j<=h2 )
-              {
-                if( access_buffer[i] <= access_buffer[j] )
-                {
-                  temp2_buffer[k] = req_id_buffer[i];
-                  temp_buffer[k++]=access_buffer[i++];
-                }
-                else
-                { 
-                  temp2_buffer[k] = req_id_buffer[j];
-                  temp_buffer[k++]=access_buffer[j++];
-                }
-              }
-              
-              while(i<=h1)
+              if( access_buffer[i] <= access_buffer[j] )
               {
                 temp2_buffer[k] = req_id_buffer[i];
                 temp_buffer[k++]=access_buffer[i++];
-
               }
-              while(j<=h2)
-              {
+              else
+              { 
                 temp2_buffer[k] = req_id_buffer[j];
                 temp_buffer[k++]=access_buffer[j++];
               }
-              l1=h2+1; 
             }
-            for(i=l1; k<R; i++) 
+            
+            while(i<=h1)
             {
               temp2_buffer[k] = req_id_buffer[i];
-              temp_buffer[k++]=access_buffer[i];
+              temp_buffer[k++]=access_buffer[i++];
 
             }
-
-            for(i=0;i<R;i++)
+            while(j<=h2)
             {
-              req_id_buffer[i] = temp2_buffer[i];
-              access_buffer[i]=temp_buffer[i];
-
+              temp2_buffer[k] = req_id_buffer[j];
+              temp_buffer[k++]=access_buffer[j++];
             }
+            l1=h2+1; 
           }
-    }
-    __syncthreads();
-    while(id==0 && access_buffer[id]==access_buffer[id-1]);
-      printf("\n%d , %d , %d\n",access_buffer[id],req_id_buffer[id],id);
+          for(i=l1; k<R; i++) 
+          {
+            temp2_buffer[k] = req_id_buffer[i];
+            temp_buffer[k++]=access_buffer[i];
+
+          }
+
+          for(i=0;i<R;i++)
+          {
+            req_id_buffer[i] = temp2_buffer[i];
+            access_buffer[i] = temp_buffer[i];
+          }
+        }
   }
 
+  __syncthreads();
+  // temp2_buffer[id+1] = req_id_buffer[id];
+  temp_buffer[id+1] = access_buffer[id];
+  
+  if(threadIdx.x == 0){
+    temp_buffer[0] = -1;
+  
+  }
+  
+  __syncthreads();
 
+    // printf("\n%d , %d   ,%d , %d\n",access_buffer[id],req_id_buffer[id],id,temp_buffer[id+1]==temp_buffer[id]);
+    // __threadfence();
+  while(temp_buffer[id+1]==temp_buffer[id]);
+    printf("\n%d , %d   ,%d , %d\n",access_buffer[id],req_id_buffer[id],id,temp_buffer[id+1]==temp_buffer[id]);
+  // printf("\n%d , %d   ,%d\n",access_buffer[id],req_id_buffer[id],id);
+  
+    // printf("%d ,%d ,%d \n",req_cen[id],req_fac[id],id);
+
+    int start_slot = req_start[id];
+    int end_slot = start_slot + req_slots[id];
+
+    bool pos = true;
+    unsigned int base_index;
+    unsigned cen = req_cen[id];
+    atomicAdd((unsigned *)&tot_reqs[cen],1);
+    if(cen == 0){
+        base_index = req_fac[id] * 24;
+    }
+    else{
+        int temp = cen-1;
+        base_index = (req_fac[id] + facility[temp]) * 24;
+    }
+    for(i=start_slot;i<end_slot;i++){
+      if(capacity[base_index + i]==0)
+        pos = false;
+    }
+    if(pos == true){
+      for(i=start_slot;i<end_slot;i++){
+        capacity[base_index + i]-=1;
+        }
+      atomicAdd((unsigned *)&succ_reqs[cen],1);
+      }
+    // printf("\n%d , %d , %d , %d , %d ,%d\n",access_buffer[id],req_id_buffer[id],id,start_slot,end_slot,temp_buffer[id+1]);
+    
+    // __threadfence();
+    // atomicExch((int*)&temp_buffer[id],-1);
+    temp_buffer[id+1] = -1;
+      
+  __syncthreads();
 }
 
 //***********************************************
@@ -122,7 +182,7 @@ int main(int argc,char **argv)
     facility=(int*)malloc(N * sizeof (int));  // Number of facilities in each computer centre
     fac_ids=(int*)malloc(max_P * N  * sizeof (int));  // Facility room numbers of each computer centre
     capacity=(int*)malloc(max_P * N * sizeof (int));  // stores capacities of each facility for every computer centre 
-
+   
 
     int success=0;  // total successful requests
     int fail = 0;   // total failed requests
@@ -178,11 +238,12 @@ int main(int argc,char **argv)
     {
       temp = temp + facility[i];
       facility[i] = temp;
+      
     }
     // variable declarations...
     int *d_centre,*d_facility,*d_capacity,*d_fac_ids,*d_succ_reqs,*d_tot_reqs,*d_req_id,*d_req_cen,*d_req_fac,*d_req_start,*d_req_slots;
-    
-    
+    short int *capacity_per_hour;
+
     // Allocate memory on GPU 
     cudaMalloc( &d_req_id   , (R) * sizeof (int) );
     cudaMalloc( &d_req_cen  , (R) * sizeof (int) );
@@ -194,6 +255,7 @@ int main(int argc,char **argv)
     cudaMalloc( &d_facility  , N * sizeof (int)); 
     cudaMalloc( &d_capacity  , max_P * N  * sizeof (int));
     cudaMalloc( &d_fac_ids   , max_P * N  * sizeof (int));
+    cudaMalloc( &capacity_per_hour  , facility[N-1] * N * 24 * sizeof (short int));
     cudaMalloc( &d_succ_reqs , N*sizeof(int)); 
     cudaMalloc( &d_tot_reqs  , N*sizeof(int)); 
 
@@ -205,6 +267,12 @@ int main(int argc,char **argv)
     // cudaMemcpy(d_succ_reqs, succ_reqs, N*sizeof(int) , cudaMemcpyHostToDevice)
     // cudaMemcpy(d_tot_reqs , tot_reqs , N*sizeof(int) , cudaMemcpyHostToDevice)
     
+    long int  gridDimx = ceil(float(N) / 40);
+    dim3 grid3(gridDimx,1,1);
+    dim3 block3(24,40,1);
+    init_capacity<<<grid3,block3>>>(capacity_per_hour,d_capacity);
+    cudaDeviceSynchronize();
+
     // Transferring Request in a batch of 1024
     unsigned int i = 0;
     unsigned long int req_per_iter = BLOCKSIZE * (sizeof(int));
@@ -237,15 +305,14 @@ int main(int argc,char **argv)
       cudaMemcpyAsync(d_req_start + (i * req_per_iter), req_start + (i * req_per_iter) , req_per_iter, cudaMemcpyHostToDevice);
       cudaMemcpyAsync(d_req_slots + (i * req_per_iter), req_slots + (i * req_per_iter) , req_per_iter, cudaMemcpyHostToDevice);
 
-      allot_request<<<1,BLOCKSIZE>>>(d_centre,d_facility,d_capacity,d_fac_ids,d_req_id,d_req_cen,d_req_fac,d_req_start,d_req_slots,i,R);
+      allot_request<<<1,BLOCKSIZE>>>(d_facility,capacity_per_hour,d_req_id,d_req_cen,d_req_fac,d_req_start,d_req_slots,i,R,d_tot_reqs,d_succ_reqs);
       
       cudaDeviceSynchronize();
 
 
     }
 
-    allot_request<<<1,BLOCKSIZE>>>(d_centre,d_facility,d_capacity,d_fac_ids,d_req_id,d_req_cen,d_req_fac,d_req_start,d_req_slots,i,R);
-    // mergesort<<<1,4>>>(d_req_start,50);
+    allot_request<<<1,R>>>(d_facility,capacity_per_hour,d_req_id,d_req_cen,d_req_fac,d_req_start,d_req_slots,i,R,d_tot_reqs,d_succ_reqs);
     cudaDeviceSynchronize();
     cudaMemcpy(tot_reqs , d_tot_reqs , N * sizeof(int), cudaMemcpyDeviceToHost);
     cudaMemcpy(succ_reqs, d_succ_reqs, N * sizeof(int), cudaMemcpyDeviceToHost);
