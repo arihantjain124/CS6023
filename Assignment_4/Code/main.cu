@@ -138,6 +138,7 @@ __global__ void allot_request(int *facility,int *capacity,int *req_id,int *req_c
         int temp = cen-1;
         base_index = (req_fac[curr_req] + facility[temp]) * 24;
     }
+    
     for(i=start_slot;i<end_slot;i++){
       if(capacity[base_index + i]==0)
         pos = false;
@@ -149,6 +150,8 @@ __global__ void allot_request(int *facility,int *capacity,int *req_id,int *req_c
         }
       atomicAdd((unsigned *)&succ_reqs[cen],1);
       }
+    
+    printf("s=%d:e=%d:%d   %d\n",start_slot,end_slot,base_index,pos);
     j++;
     if(temp2_buffer[j]==1 || j>R-1){
       // printf("break %d ,%d\n",j,id);
