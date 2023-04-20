@@ -10,31 +10,18 @@
 using namespace std;
 
 //*******************************************
-
-__device__ volatile unsigned d_succ = 0;
-__device__ volatile unsigned d_fail = 0;
-__device__ volatile unsigned counter = 0 ;
-
-__global__ void init_capacity(short int *capacity_per_hour,int *capacity){
+__global__ void init_capacity(int *capacity_per_hour,int *capacity){
 
   int idx = threadIdx.x;
   int idy = threadIdx.y;
   int blx = blockIdx.x;
-  short int cap;
+  int cap;
   cap = capacity[idy + (blx * gridDim.x)];
-  
-  // if(threadIdx.x == 0){
-    
-  // printf("%d %d\n",cap,idy);
-  // }
   long int id = idx + (idy * blockDim.x) + (blx * gridDim.x);
   capacity_per_hour[id] = cap;
-  // if(idy == 3){
-  //   printf("%d ",capacity_per_hour[id]);
-  // }
 }
 
-__global__ void allot_request(int *facility,short int *capacity,int *req_id,int *req_cen,int *req_fac,int *req_start,int *req_slots,int i,int R,int *tot_reqs,int *succ_reqs){
+__global__ void allot_request(int *facility,int *capacity,int *req_id,int *req_cen,int *req_fac,int *req_start,int *req_slots,int i,int R,int *tot_reqs,int *succ_reqs){
 
   unsigned int id = threadIdx.x;
   __shared__ unsigned int access_buffer[1024];
@@ -113,6 +100,7 @@ __global__ void allot_request(int *facility,short int *capacity,int *req_id,int 
   }
 
   __syncthreads();
+
   temp_buffer[id+1] = access_buffer[id];
   
   if(threadIdx.x == 0){
@@ -124,39 +112,31 @@ __global__ void allot_request(int *facility,short int *capacity,int *req_id,int 
 
   __syncthreads();
 
-  //  printf("\n%d , %d   ,%d\n",access_buffer[id],req_id_buffer[id],id);
-    // printf("\n%d , %d   ,%d , %d\n",access_buffer[id],req_id_buffer[id],id,temp_buffer[id+1]==temp_buffer[id]);
-    // __threadfence();
     bool flag = temp_buffer[id+1]==temp_buffer[id];
   if(!flag)
   {
     temp2_buffer[id] = 1;
-    atomicAdd((unsigned *)&counter,1);
   }
   __syncthreads();
 
-  //  printf("\n%d , %d   ,%d %d:%d\n",access_buffer[id],req_id_buffer[id],req_start[req_id_buffer[id]],id,temp2_buffer[id]);
   if(!flag)
   {
-    
-  //  printf("\n%d , %d   ,%d\n",access_buffer[id],temp2_buffer[id],id);
+    unsigned int curr_req;
    for(int j=id;;){
-    // id = j;
-    int start_slot = req_start[j];
-    int end_slot = start_slot + req_slots[j];
+    curr_req = req_id_buffer[j];
+    int start_slot = req_start[curr_req];
+    int end_slot = start_slot + req_slots[curr_req];
 
-    // if(access_buffer[j] == 100)
-    //   printf("\n%d , %d ,%d: %d\n",access_buffer[j],req_id_buffer[j],j,id);
     bool pos = true;
     unsigned int base_index;
-    unsigned cen = req_cen[j];
+    unsigned cen = req_cen[curr_req];
     atomicAdd((unsigned *)&tot_reqs[cen],1);
     if(cen == 0){
-        base_index = req_fac[j] * 24;
+        base_index = req_fac[curr_req] * 24;
     }
     else{
         int temp = cen-1;
-        base_index = (req_fac[j] + facility[temp]) * 24;
+        base_index = (req_fac[curr_req] + facility[temp]) * 24;
     }
     for(i=start_slot;i<end_slot;i++){
       if(capacity[base_index + i]==0)
@@ -164,7 +144,8 @@ __global__ void allot_request(int *facility,short int *capacity,int *req_id,int 
     }
     if(pos == true){
       for(i=start_slot;i<end_slot;i++){
-        capacity[base_index + i]-=1;
+        atomicAdd((int*)&capacity[base_index + i],-1);
+        // capacity[base_index + i]-=1;
         }
       atomicAdd((unsigned *)&succ_reqs[cen],1);
       }
@@ -173,6 +154,7 @@ __global__ void allot_request(int *facility,short int *capacity,int *req_id,int 
       // printf("break %d ,%d\n",j,id);
       break;
     }
+    __threadfence();
     }
    }
   
@@ -266,7 +248,7 @@ int main(int argc,char **argv)
     }
     // variable declarations...
     int *d_centre,*d_facility,*d_capacity,*d_fac_ids,*d_succ_reqs,*d_tot_reqs,*d_req_id,*d_req_cen,*d_req_fac,*d_req_start,*d_req_slots;
-    short int *capacity_per_hour;
+    int *capacity_per_hour;
 
     // Allocate memory on GPU 
     cudaMalloc( &d_req_id   , (R) * sizeof (int) );
@@ -279,7 +261,7 @@ int main(int argc,char **argv)
     cudaMalloc( &d_facility  , N * sizeof (int)); 
     cudaMalloc( &d_capacity  , max_P * N  * sizeof (int));
     cudaMalloc( &d_fac_ids   , max_P * N  * sizeof (int));
-    cudaMalloc( &capacity_per_hour  , facility[N-1] * N * 24 * sizeof (short int));
+    cudaMalloc( &capacity_per_hour  , facility[N-1] * N * 24 * sizeof (int));
     cudaMalloc( &d_succ_reqs , N*sizeof(int)); 
     cudaMalloc( &d_tot_reqs  , N*sizeof(int)); 
 
@@ -340,10 +322,12 @@ int main(int argc,char **argv)
 
     allot_request<<<1,R>>>(d_facility,capacity_per_hour,d_req_id,d_req_cen,d_req_fac,d_req_start,d_req_slots,i,R,d_tot_reqs,d_succ_reqs);
     cudaDeviceSynchronize();
+    // printf("Total Request %d\n",tot_reqs);
     cudaMemcpy(tot_reqs , d_tot_reqs , N * sizeof(int), cudaMemcpyDeviceToHost);
     cudaMemcpy(succ_reqs, d_succ_reqs, N * sizeof(int), cudaMemcpyDeviceToHost);
-    cudaMemcpy(&success  , (unsigned *)&d_succ     ,     sizeof(int), cudaMemcpyDeviceToHost);
-    cudaMemcpy(&fail     , (unsigned *)&d_fail     ,     sizeof(int), cudaMemcpyDeviceToHost);
+    int total = std::accumulate(tot_reqs , tot_reqs + N , 0);
+    success = std::accumulate(succ_reqs , succ_reqs + N , 0);
+    fail = total - success;
     //********************************
 
     // Output
