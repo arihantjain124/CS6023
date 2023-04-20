@@ -13,8 +13,7 @@ using namespace std;
 
 __device__ volatile unsigned d_succ = 0;
 __device__ volatile unsigned d_fail = 0;
-__device__ volatile unsigned int counter;
-__device__ volatile unsigned last_thread;
+__device__ volatile unsigned counter = 0 ;
 
 __global__ void init_capacity(short int *capacity_per_hour,int *capacity){
 
@@ -22,20 +21,26 @@ __global__ void init_capacity(short int *capacity_per_hour,int *capacity){
   int idy = threadIdx.y;
   int blx = blockIdx.x;
   short int cap;
-
   cap = capacity[idy + (blx * gridDim.x)];
+  
+  // if(threadIdx.x == 0){
+    
+  // printf("%d %d\n",cap,idy);
+  // }
   long int id = idx + (idy * blockDim.x) + (blx * gridDim.x);
   capacity_per_hour[id] = cap;
+  // if(idy == 3){
+  //   printf("%d ",capacity_per_hour[id]);
+  // }
 }
 
 __global__ void allot_request(int *facility,short int *capacity,int *req_id,int *req_cen,int *req_fac,int *req_start,int *req_slots,int i,int R,int *tot_reqs,int *succ_reqs){
 
   unsigned int id = threadIdx.x;
-  __shared__ volatile unsigned int access_buffer[1024];
-  __shared__ volatile unsigned int req_id_buffer[1024];
-  __shared__ volatile unsigned int temp2_buffer[1024];
-  __shared__ volatile long int temp_buffer[1025];
-  counter = 0;
+  __shared__ unsigned int access_buffer[1024];
+  __shared__ unsigned int req_id_buffer[1024];
+  __shared__ unsigned int temp2_buffer[1024];
+  __shared__ long int temp_buffer[1025];
   __shared__ volatile int size;
   size = 1;
 
@@ -43,9 +48,13 @@ __global__ void allot_request(int *facility,short int *capacity,int *req_id,int 
   __syncthreads();
   unsigned int uid = req_cen[id] * 100 + req_fac[id];
   access_buffer[id] = uid;
-  req_id_buffer[id] = req_id[id];
+  req_id_buffer[id] = id;
   
+
+
   __syncthreads();
+  
+  //Sort
   if (id == threadIdx.x){
       int l1,l2,k,h1,h2,j;
         for(size=1; size < R; size=size*2)
@@ -104,37 +113,50 @@ __global__ void allot_request(int *facility,short int *capacity,int *req_id,int 
   }
 
   __syncthreads();
-  // temp2_buffer[id+1] = req_id_buffer[id];
   temp_buffer[id+1] = access_buffer[id];
   
   if(threadIdx.x == 0){
     temp_buffer[0] = -1;
   
   }
-  
+
+  temp2_buffer[id] = 0 ;
+
   __syncthreads();
 
+  //  printf("\n%d , %d   ,%d\n",access_buffer[id],req_id_buffer[id],id);
     // printf("\n%d , %d   ,%d , %d\n",access_buffer[id],req_id_buffer[id],id,temp_buffer[id+1]==temp_buffer[id]);
     // __threadfence();
-  while(temp_buffer[id+1]==temp_buffer[id]);
-    printf("\n%d , %d   ,%d , %d\n",access_buffer[id],req_id_buffer[id],id,temp_buffer[id+1]==temp_buffer[id]);
-  // printf("\n%d , %d   ,%d\n",access_buffer[id],req_id_buffer[id],id);
-  
-    // printf("%d ,%d ,%d \n",req_cen[id],req_fac[id],id);
+    bool flag = temp_buffer[id+1]==temp_buffer[id];
+  if(!flag)
+  {
+    temp2_buffer[id] = 1;
+    atomicAdd((unsigned *)&counter,1);
+  }
+  __syncthreads();
 
-    int start_slot = req_start[id];
-    int end_slot = start_slot + req_slots[id];
+  //  printf("\n%d , %d   ,%d %d:%d\n",access_buffer[id],req_id_buffer[id],req_start[req_id_buffer[id]],id,temp2_buffer[id]);
+  if(!flag)
+  {
+    
+  //  printf("\n%d , %d   ,%d\n",access_buffer[id],temp2_buffer[id],id);
+   for(int j=id;;){
+    // id = j;
+    int start_slot = req_start[j];
+    int end_slot = start_slot + req_slots[j];
 
+    // if(access_buffer[j] == 100)
+    //   printf("\n%d , %d ,%d: %d\n",access_buffer[j],req_id_buffer[j],j,id);
     bool pos = true;
     unsigned int base_index;
-    unsigned cen = req_cen[id];
+    unsigned cen = req_cen[j];
     atomicAdd((unsigned *)&tot_reqs[cen],1);
     if(cen == 0){
-        base_index = req_fac[id] * 24;
+        base_index = req_fac[j] * 24;
     }
     else{
         int temp = cen-1;
-        base_index = (req_fac[id] + facility[temp]) * 24;
+        base_index = (req_fac[j] + facility[temp]) * 24;
     }
     for(i=start_slot;i<end_slot;i++){
       if(capacity[base_index + i]==0)
@@ -146,12 +168,14 @@ __global__ void allot_request(int *facility,short int *capacity,int *req_id,int 
         }
       atomicAdd((unsigned *)&succ_reqs[cen],1);
       }
-    // printf("\n%d , %d , %d , %d , %d ,%d\n",access_buffer[id],req_id_buffer[id],id,start_slot,end_slot,temp_buffer[id+1]);
-    
-    // __threadfence();
-    // atomicExch((int*)&temp_buffer[id],-1);
-    temp_buffer[id+1] = -1;
-      
+    j++;
+    if(temp2_buffer[j]==1 || j>R-1){
+      // printf("break %d ,%d\n",j,id);
+      break;
+    }
+    }
+   }
+  
   __syncthreads();
 }
 
@@ -268,8 +292,10 @@ int main(int argc,char **argv)
     // cudaMemcpy(d_tot_reqs , tot_reqs , N*sizeof(int) , cudaMemcpyHostToDevice)
     
     long int  gridDimx = ceil(float(N) / 40);
+    long int  blockDimy = facility[N-1] % 40;
     dim3 grid3(gridDimx,1,1);
-    dim3 block3(24,40,1);
+    dim3 block3(24,blockDimy,1);
+    // printf("herehe %ld %ld ",gridDimx,blockDimy);
     init_capacity<<<grid3,block3>>>(capacity_per_hour,d_capacity);
     cudaDeviceSynchronize();
 
@@ -277,10 +303,10 @@ int main(int argc,char **argv)
     unsigned int i = 0;
     unsigned long int req_per_iter = BLOCKSIZE * (sizeof(int));
     long int max_iter =  ceil(float(R)/BLOCKSIZE);
-    printf("number of iteration required %ld \n",max_iter);
+    // printf("number of iteration required %ld \n",max_iter);
 
     if (max_iter>1){
-      printf("Byte Transfer per cycle %ld \n",req_per_iter);
+      // printf("Byte Transfer per cycle %ld \n",req_per_iter);
       cudaMemcpy(d_req_id    , req_id     , req_per_iter, cudaMemcpyHostToDevice);
       cudaMemcpy(d_req_cen   , req_cen    , req_per_iter, cudaMemcpyHostToDevice);
       cudaMemcpy(d_req_fac   , req_fac    , req_per_iter, cudaMemcpyHostToDevice);
